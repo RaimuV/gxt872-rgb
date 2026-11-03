@@ -36,7 +36,9 @@ enum gxt872_effect {
 	GXT872_EFFECT_RAINBOW_WHEEL = 0x0f,
 	GXT872_EFFECT_RAINBOW_WATERFALL = 0x10,
 	GXT872_EFFECT_BLOOM = 0x11,
-	GXT872_EFFECT_OFF = 0x15,
+	/* 0x15 enables the per-key "custom" mode; the vendor app sends a
+	 * companion 0x06 report with it. /off is implemented as black. */
+	GXT872_EFFECT_CUSTOM = 0x15,
 };
 
 #define GXT872_BRIGHTNESS_MIN 0

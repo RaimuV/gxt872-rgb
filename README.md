@@ -23,8 +23,8 @@ HID feature report and this project speaks it directly through
 | Turn the backlight off | ✅ working |
 | Device auto-detection | ✅ working |
 | CLI + GUI | ✅ working |
-| Side zone / top light bar | 🚧 part of the LED buffer, not mapped |
-| Per-key custom colours | 🚧 not mapped yet |
+| Side zone / top light bar | 🚧 firmware-only, not controllable over USB |
+| Per-key custom colours | 🚧 custom-mode protocol not decoded |
 
 All the working features were verified on real hardware, both by
 capturing the USB traffic and by looking at the keyboard (webcam).
@@ -70,7 +70,11 @@ checksum `0x5aa5` at offset 104). The template is in
 | Raindrops | `0x05` | Rainbow Wheel | `0x0f` |
 | Ripple Burst | `0x07` | Rainbow Waterfall | `0x10` |
 | Sparkle | `0x08` | Bloom | `0x11` |
-| | | Off | `0x15` |
+| | | Custom mode | `0x15` |
+
+`0x15` switches the keyboard to the vendor's per-key "custom" mode (the
+app sends a companion `0x06` report); the per-key payload itself was not
+decoded. `--off` uses static + black instead.
 
 The protocol was reverse engineered by capturing the vendor software: the
 Windows application was run under **Wine** on Linux and its USB traffic was
@@ -121,7 +125,7 @@ gxt872-rgb --effect breathing              # select an effect
 gxt872-rgb --brightness 3                  # 0..3
 gxt872-rgb --speed 4                       # 0..4
 
-gxt872-rgb --off                           # backlight off
+gxt872-rgb --off                           # black + static (backlight off)
 
 # combine them (applied in this order)
 gxt872-rgb --color 00FF80 --effect breathing --brightness 2 --speed 3

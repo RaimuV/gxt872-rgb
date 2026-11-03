@@ -38,7 +38,7 @@ static const struct named_effect named_effects[] = {
 	{ "rainbow-wheel", GXT872_EFFECT_RAINBOW_WHEEL },
 	{ "rainbow-waterfall", GXT872_EFFECT_RAINBOW_WATERFALL },
 	{ "bloom", GXT872_EFFECT_BLOOM },
-	{ "off", GXT872_EFFECT_OFF },
+	{ "custom", GXT872_EFFECT_CUSTOM },
 };
 
 static void usage(const char *argv0)

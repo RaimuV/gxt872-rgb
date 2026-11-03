@@ -330,5 +330,9 @@ int gxt872_set_speed(struct gxt872_device *dev, int level)
 
 int gxt872_off(struct gxt872_device *dev)
 {
-	return gxt872_set_effect(dev, GXT872_EFFECT_OFF);
+	if (!dev)
+		return -1;
+	if (gxt872_set_effect(dev, GXT872_EFFECT_STATIC) < 0)
+		return -1;
+	return gxt872_set_color(dev, 0, 0, 0);
 }
