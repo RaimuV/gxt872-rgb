@@ -1,0 +1,2 @@
+# Trust GXT 872 Xyra (145f:0367) — hidraw access for the logged-in user
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="145f", ATTRS{idProduct}=="0367", TAG+="uaccess"
