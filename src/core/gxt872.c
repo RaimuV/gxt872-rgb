@@ -1,6 +1,6 @@
 /*
  * gxt872.c — core implementation: hidraw discovery and the LED feature
- * report. No dependencies beyond libc + linux/hidraw.h.
+ * reports. No dependencies beyond libc + linux/hidraw.h.
  */
 #include "gxt872.h"
 
@@ -20,19 +20,54 @@
 
 #define REPORT_LEN 520
 #define REPORT_ID 0x06
-#define CMD_SET_COLOR 0x0a
-#define COLOR_OFFSET 29
+
+#define CMD_COLOR 0x0a
+#define CMD_CONFIG 0x04
+
+#define OFF_COLOR 29
+#define OFF_EFFECT 18
+#define OFF_BRIGHTNESS 66
+#define OFF_SPEED 69
+
+#define SPEED_BASE 0x07
+#define SPEED_STEP 0x10
 
 struct gxt872_device {
 	int fd;
 	char path[64];
+	struct gxt872_state state;
+};
+
+/*
+ * Config report template, captured from the vendor software with the
+ * effect set to "static". Bytes that matter are overwritten per call:
+ * 18 = effect, 66 = brightness, 69 = speed. Everything else is constant
+ * device configuration (zones, checksum 0x5aa5 at byte 104).
+ */
+static const unsigned char config_template[REPORT_LEN] = {
+	0x06, 0x04, 0x00, 0x00, 0x01, 0x00, 0x80, 0x00,
+	0x00, 0x03, 0x03, 0x02, 0x00, 0x00, 0x04, 0x04,
+	0x07, 0x00, 0x01, 0x20, 0x01, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x01, 0x00, 0x02, 0x01, 0x00, 0xff,
+	0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x01,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0xff, 0xff, 0x00, 0x40, 0x04, 0x47, 0x04, 0x47,
+	0x04, 0x47, 0x04, 0x47, 0x04, 0x47, 0x04, 0x47,
+	0x04, 0x47, 0x04, 0x47, 0x04, 0x47, 0x04, 0x47,
+	0x04, 0x47, 0x04, 0x47, 0x04, 0x47, 0x04, 0x47,
+	0x04, 0x47, 0x04, 0x47, 0x04, 0x37, 0x07, 0x47,
+	0x07, 0x47, 0x07, 0x44, 0x07, 0x44, 0x07, 0x44,
+	0x07, 0x44, 0x07, 0x44, 0x07, 0x44, 0x07, 0x44,
+	0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
+	0x5a, 0xa5,
 };
 
 /* ------------------------------------------------------------------ */
 /* Discovery                                                          */
 /* ------------------------------------------------------------------ */
 
-/* Read a sysfs attribute of a hidraw node into buf. */
 static int read_attr(const char *hidraw, const char *attr, char *buf,
 		     size_t len)
 {
@@ -50,24 +85,23 @@ static int read_attr(const char *hidraw, const char *attr, char *buf,
 	if (n == 0)
 		return -1;
 	buf[n] = '\0';
-	/* trim trailing newline */
 	while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
 		buf[--n] = '\0';
 	return 0;
 }
 
-/* A matching node has HID_ID 0003:0000145F:00000367 and HID_PHYS ending
- * in "/input1" (the vendor interface). */
 static int is_target(const char *hidraw)
 {
-	char id[512], phys[512];
+	char uevent[512];
 	unsigned int bus = 0, vid = 0, pid = 0;
+	char *line;
+	char *nl;
 	size_t plen;
 
-	if (read_attr(hidraw, "uevent", id, sizeof(id)))
+	if (read_attr(hidraw, "uevent", uevent, sizeof(uevent)))
 		return 0;
-	/* uevent contains several lines; look for HID_ID */
-	char *line = strstr(id, "HID_ID=");
+
+	line = strstr(uevent, "HID_ID=");
 	if (!line)
 		return 0;
 	if (sscanf(line, "HID_ID=%x:%x:%x", &bus, &vid, &pid) != 3)
@@ -75,13 +109,10 @@ static int is_target(const char *hidraw)
 	if (vid != GXT872_VID || pid != GXT872_PID)
 		return 0;
 
-	if (read_attr(hidraw, "uevent", phys, sizeof(phys)))
-		return 0;
-	line = strstr(phys, "HID_PHYS=");
+	line = strstr(uevent, "HID_PHYS=");
 	if (!line)
 		return 0;
-	/* trim the line to its end */
-	char *nl = strchr(line, '\n');
+	nl = strchr(line, '\n');
 	if (nl)
 		*nl = '\0';
 	plen = strlen(line);
@@ -125,7 +156,6 @@ struct gxt872_device *gxt872_open(const char *path)
 	if (path) {
 		snprintf(dev->path, sizeof(dev->path), "%s", path);
 	} else {
-		/* enumerate needs a small array; keep it simple */
 		char list[4][64];
 		int n = gxt872_enumerate(list, 4);
 
@@ -141,6 +171,14 @@ struct gxt872_device *gxt872_open(const char *path)
 		free(dev);
 		return NULL;
 	}
+
+	/* Unknown until the caller sets them: neutral defaults. */
+	dev->state = (struct gxt872_state){
+		.r = 0xff, .g = 0xff, .b = 0xff,
+		.effect = GXT872_EFFECT_STATIC,
+		.brightness = 2,
+		.speed = 2,
+	};
 	return dev;
 }
 
@@ -158,6 +196,13 @@ const char *gxt872_path(const struct gxt872_device *dev)
 	return dev ? dev->path : "";
 }
 
+void gxt872_get_state(const struct gxt872_device *dev,
+		      struct gxt872_state *state)
+{
+	if (dev && state)
+		*state = dev->state;
+}
+
 /* HIDIOCSFEATURE(len) */
 #define HIDIOCSFEATURE_REQ(len) \
 	(((3u) << 30) | ((len) << 16) | ((unsigned)'H' << 8) | 0x06)
@@ -165,7 +210,10 @@ const char *gxt872_path(const struct gxt872_device *dev)
 static int send_report(struct gxt872_device *dev, const unsigned char *buf,
 		       size_t len)
 {
-	return ioctl(dev->fd, HIDIOCSFEATURE_REQ(len), buf);
+	int rc = ioctl(dev->fd, HIDIOCSFEATURE_REQ(len), buf);
+
+	/* HIDIOCSFEATURE returns the number of bytes on success. */
+	return rc < 0 ? -1 : 0;
 }
 
 int gxt872_set_color(struct gxt872_device *dev, uint8_t r, uint8_t g,
@@ -178,19 +226,61 @@ int gxt872_set_color(struct gxt872_device *dev, uint8_t r, uint8_t g,
 
 	memset(report, 0, sizeof(report));
 	report[0] = REPORT_ID;
-	report[1] = CMD_SET_COLOR;
+	report[1] = CMD_COLOR;
 	report[4] = 0x01;
 	report[7] = 0x02;
-	report[COLOR_OFFSET + 0] = r;
-	report[COLOR_OFFSET + 1] = g;
-	report[COLOR_OFFSET + 2] = b;
+	report[OFF_COLOR + 0] = r;
+	report[OFF_COLOR + 1] = g;
+	report[OFF_COLOR + 2] = b;
 
 	if (send_report(dev, report, sizeof(report)) < 0)
 		return -1;
+
+	dev->state.r = r;
+	dev->state.g = g;
+	dev->state.b = b;
 	return 0;
+}
+
+static int send_config(struct gxt872_device *dev)
+{
+	unsigned char report[REPORT_LEN];
+
+	memcpy(report, config_template, sizeof(report));
+	report[OFF_EFFECT] = dev->state.effect;
+	report[OFF_BRIGHTNESS] = dev->state.brightness;
+	report[OFF_SPEED] = (unsigned char)(SPEED_BASE +
+					    SPEED_STEP * dev->state.speed);
+
+	return send_report(dev, report, sizeof(report));
+}
+
+int gxt872_set_effect(struct gxt872_device *dev, enum gxt872_effect effect)
+{
+	if (!dev)
+		return -1;
+	dev->state.effect = (uint8_t)effect;
+	return send_config(dev);
+}
+
+int gxt872_set_brightness(struct gxt872_device *dev, int level)
+{
+	if (!dev || level < GXT872_BRIGHTNESS_MIN ||
+	    level > GXT872_BRIGHTNESS_MAX)
+		return -1;
+	dev->state.brightness = (uint8_t)level;
+	return send_config(dev);
+}
+
+int gxt872_set_speed(struct gxt872_device *dev, int level)
+{
+	if (!dev || level < GXT872_SPEED_MIN || level > GXT872_SPEED_MAX)
+		return -1;
+	dev->state.speed = (uint8_t)level;
+	return send_config(dev);
 }
 
 int gxt872_off(struct gxt872_device *dev)
 {
-	return gxt872_set_color(dev, 0, 0, 0);
+	return gxt872_set_effect(dev, GXT872_EFFECT_OFF);
 }

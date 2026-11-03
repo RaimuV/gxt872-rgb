@@ -5,6 +5,7 @@
 
 struct gxt872_device;
 
+class QComboBox;
 class QLabel;
 class QSlider;
 
@@ -18,7 +19,7 @@ public:
 
 private slots:
 	void pickColor();
-	void applyColor();
+	void applyAll();
 	void turnOff();
 	void slidersChanged();
 
@@ -29,10 +30,13 @@ private:
 
 	gxt872_device *dev_ = nullptr;
 	QColor color_ = QColor(255, 0, 0);
+	QComboBox *effect_ = nullptr;
 	QLabel *preview_ = nullptr;
 	QLabel *status_ = nullptr;
 	QLabel *hex_ = nullptr;
 	QSlider *red_ = nullptr;
 	QSlider *green_ = nullptr;
 	QSlider *blue_ = nullptr;
+	QSlider *brightness_ = nullptr;
+	QSlider *speed_ = nullptr;
 };

@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include <QColorDialog>
+#include <QComboBox>
 #include <QEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -11,6 +12,40 @@
 #include <QWidget>
 
 #include "gxt872.h"
+
+namespace {
+
+struct EffectEntry {
+	const char *name;
+	int value;
+};
+
+const EffectEntry kEffects[] = {
+	{ QT_TR_NOOP("Statico"), GXT872_EFFECT_STATIC },
+	{ QT_TR_NOOP("Respiro"), GXT872_EFFECT_BREATHING },
+	{ QT_TR_NOOP("Ciclo arcobaleno"), GXT872_EFFECT_RAINBOW_CYCLE },
+	{ QT_TR_NOOP("Onda orizzontale"), GXT872_EFFECT_HORIZONTAL_RIPPLE },
+	{ QT_TR_NOOP("Gocce"), GXT872_EFFECT_RAINDROPS },
+	{ QT_TR_NOOP("Ripple burst"), GXT872_EFFECT_RIPPLE_BURST },
+	{ QT_TR_NOOP("Scintille"), GXT872_EFFECT_SPARKLE },
+	{ QT_TR_NOOP("Serpente"), GXT872_EFFECT_SNAKE },
+	{ QT_TR_NOOP("Onda arcobaleno"), GXT872_EFFECT_RAINBOW_WAVE },
+	{ QT_TR_NOOP("Reattivo"), GXT872_EFFECT_REACTIVE },
+	{ QT_TR_NOOP("Onda sinusoidale"), GXT872_EFFECT_SINE_WAVE },
+	{ QT_TR_NOOP("Ruota arcobaleno"), GXT872_EFFECT_RAINBOW_WHEEL },
+	{ QT_TR_NOOP("Cascata arcobaleno"), GXT872_EFFECT_RAINBOW_WATERFALL },
+	{ QT_TR_NOOP("Bloom"), GXT872_EFFECT_BLOOM },
+};
+
+QSlider *makeSlider(int min, int max, int value, QWidget *parent)
+{
+	auto *s = new QSlider(Qt::Horizontal, parent);
+	s->setRange(min, max);
+	s->setValue(value);
+	return s;
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
@@ -30,26 +65,28 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 	}
 	layout->addWidget(device);
 
+	auto *effect_row = new QHBoxLayout;
+	effect_row->addWidget(new QLabel(tr("Effetto"), central));
+	effect_ = new QComboBox(central);
+	for (const auto &e : kEffects)
+		effect_->addItem(tr(e.name), e.value);
+	effect_row->addWidget(effect_, 1);
+	layout->addLayout(effect_row);
+
 	preview_ = new QLabel(central);
 	preview_->setMinimumHeight(90);
-	preview_->setAlignment(Qt::AlignCenter);
 	preview_->setCursor(Qt::PointingHandCursor);
 	preview_->setToolTip(tr("Clic per scegliere il colore"));
+	preview_->installEventFilter(this);
 	layout->addWidget(preview_);
 
-	auto *hex_row = new QHBoxLayout;
 	hex_ = new QLabel(central);
-	hex_->setObjectName("hex");
-	hex_row->addWidget(hex_);
-	hex_row->addStretch();
-	layout->addLayout(hex_row);
+	layout->addWidget(hex_);
 
 	auto *grid = new QGridLayout;
-	red_ = new QSlider(Qt::Horizontal, central);
-	green_ = new QSlider(Qt::Horizontal, central);
-	blue_ = new QSlider(Qt::Horizontal, central);
-	for (QSlider *s : { red_, green_, blue_ })
-		s->setRange(0, 255);
+	red_ = makeSlider(0, 255, color_.red(), central);
+	green_ = makeSlider(0, 255, color_.green(), central);
+	blue_ = makeSlider(0, 255, color_.blue(), central);
 	grid->addWidget(new QLabel("R", central), 0, 0);
 	grid->addWidget(red_, 0, 1);
 	grid->addWidget(new QLabel("G", central), 1, 0);
@@ -57,6 +94,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 	grid->addWidget(new QLabel("B", central), 2, 0);
 	grid->addWidget(blue_, 2, 1);
 	layout->addLayout(grid);
+
+	auto *bright_row = new QHBoxLayout;
+	bright_row->addWidget(new QLabel(tr("Luminosità"), central));
+	brightness_ = makeSlider(GXT872_BRIGHTNESS_MIN, GXT872_BRIGHTNESS_MAX, 2,
+				 central);
+	bright_row->addWidget(brightness_, 1);
+	layout->addLayout(bright_row);
+
+	auto *speed_row = new QHBoxLayout;
+	speed_row->addWidget(new QLabel(tr("Velocità"), central));
+	speed_ = makeSlider(GXT872_SPEED_MIN, GXT872_SPEED_MAX, 2, central);
+	speed_row->addWidget(speed_, 1);
+	layout->addLayout(speed_row);
 
 	auto *buttons = new QHBoxLayout;
 	auto *apply = new QPushButton(tr("Applica"), central);
@@ -70,16 +120,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 	layout->addWidget(status_);
 
 	setCentralWidget(central);
-	resize(420, 380);
+	resize(460, 520);
 
-	connect(apply, &QPushButton::clicked, this, &MainWindow::applyColor);
+	connect(apply, &QPushButton::clicked, this, &MainWindow::applyAll);
 	connect(off, &QPushButton::clicked, this, &MainWindow::turnOff);
 	connect(red_, &QSlider::valueChanged, this, &MainWindow::slidersChanged);
 	connect(green_, &QSlider::valueChanged, this, &MainWindow::slidersChanged);
 	connect(blue_, &QSlider::valueChanged, this, &MainWindow::slidersChanged);
-
-	// Clicking the preview opens the colour dialog.
-	preview_->installEventFilter(this);
 
 	setColor(color_);
 }
@@ -120,7 +167,7 @@ void MainWindow::slidersChanged()
 	setColor(QColor(red_->value(), green_->value(), blue_->value()));
 }
 
-void MainWindow::applyColor()
+void MainWindow::applyAll()
 {
 	if (!dev_) {
 		setStatus(tr("Tastiera non collegata"), true);
@@ -128,10 +175,15 @@ void MainWindow::applyColor()
 	}
 	if (gxt872_set_color(dev_, (uint8_t)color_.red(),
 			     (uint8_t)color_.green(),
-			     (uint8_t)color_.blue()) == 0)
-		setStatus(tr("Colore applicato"));
-	else
+			     (uint8_t)color_.blue()) < 0 ||
+	    gxt872_set_effect(dev_, (enum gxt872_effect)effect_
+				      ->currentData().toInt()) < 0 ||
+	    gxt872_set_brightness(dev_, brightness_->value()) < 0 ||
+	    gxt872_set_speed(dev_, speed_->value()) < 0) {
 		setStatus(tr("Errore nell'invio del comando"), true);
+		return;
+	}
+	setStatus(tr("Impostazioni applicate"));
 }
 
 void MainWindow::turnOff()
