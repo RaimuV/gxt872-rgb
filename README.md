@@ -23,7 +23,11 @@ HID feature report and this project speaks it directly through
 | Turn the backlight off | ✅ working |
 | Device auto-detection | ✅ working |
 | CLI + GUI | ✅ working |
+| Side zone / top light bar | 🚧 part of the LED buffer, not mapped |
 | Per-key custom colours | 🚧 not mapped yet |
+
+All the working features were verified on real hardware, both by
+capturing the USB traffic and by looking at the keyboard (webcam).
 
 ## The protocol
 
